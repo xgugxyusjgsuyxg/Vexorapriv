@@ -23,6 +23,53 @@ do
         return nil
     end
 
+    -- Check saved redemption before creating the key UI.
+    -- The server must verify the account identity; a client-supplied UserId alone
+    -- is not strong authentication.
+    local function VEXORA_CheckSavedAuthorization()
+        local httpRequest = VEXORA_RequestFunction()
+        if not httpRequest then
+            return false
+        end
+
+        local encodedOk, requestBody = pcall(function()
+            return VEXORA_HttpService:JSONEncode({
+                userId = tostring(VEXORA_Player.UserId),
+            })
+        end)
+        if not encodedOk then
+            return false
+        end
+
+        local requestOk, response = pcall(function()
+            return httpRequest({
+                Url = VEXORA_VALIDATE_URL,
+                Method = "POST",
+                Headers = {
+                    ["Content-Type"] = "application/json",
+                    ["apikey"] = VEXORA_PUBLISHABLE_KEY,
+                },
+                Body = requestBody,
+            })
+        end)
+        if not requestOk or type(response) ~= "table" then
+            return false
+        end
+
+        local parsed
+        pcall(function()
+            parsed = VEXORA_HttpService:JSONDecode(response.Body or "")
+        end)
+
+        return tonumber(response.StatusCode) == 200
+            and type(parsed) == "table"
+            and parsed.ok == true
+            and parsed.status == "valid"
+    end
+
+    VEXORA_Authorized = VEXORA_CheckSavedAuthorization()
+
+    if not VEXORA_Authorized then
     local VEXORA_Parent
     pcall(function()
         if type(gethui) == "function" then VEXORA_Parent = gethui() end
@@ -176,11 +223,28 @@ do
             else
                 local reason = type(parsed) == "table" and parsed.status or nil
                 local messages = {
-                    invalid = "Invalid key.", used = "Key belongs to another account.",
-                    expired = "This key has expired.", inactive = "This key is disabled.",
-                    bad_request = "Request data was rejected.", rate_limited = "Too many attempts. Try later.",
+                    invalid = "Invalid key.",
+                    invalid_key = "Key not found. Check key format/hash.",
+                    already_redeemed = "Key belongs to another account.",
+                    used = "Key belongs to another account.",
+                    expired = "This key has expired.",
+                    expired_key = "This key has expired.",
+                    inactive = "This key is disabled.",
+                    inactive_key = "This key is disabled.",
+                    key_required = "No saved key. Enter your key.",
+                    missing_user_id = "Account ID missing.",
+                    missing_or_invalid_user_id = "Account ID missing or invalid.",
+                    server_not_configured = "Server configuration error.",
+                    database_error = "Database error. Check Edge Function logs.",
+                    invalid_json = "Server rejected request format.",
+                    method_not_allowed = "Wrong request method.",
+                    internal_error = "Server error. Check Edge Function logs.",
+                    redemption_failed = "Redemption failed. Try again.",
                 }
-                VEXORA_SetStatus(messages[reason] or "Key rejected or server not configured.", Color3.fromRGB(255, 110, 125))
+                VEXORA_SetStatus(
+                    messages[reason] or ("Validation failed: " .. tostring(reason or "unknown response")),
+                    Color3.fromRGB(255, 110, 125)
+                )
             end
         end)
     end
@@ -195,6 +259,8 @@ do
         pcall(function() VEXORA_Gui:Destroy() end)
         return
     end
+    end -- if not already authorized, show and wait for the key gate
+
 end
 
 -- Vexora Auto Code Redeemer
